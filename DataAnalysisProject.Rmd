@@ -1,0 +1,300 @@
+# Library files
+
+```{r, warning= FALSE }
+
+# Install the packages
+install.packages("mlbench")
+install.packages("nnet")
+install.packages("randomForest")
+install.packages("adabag")
+install.packages("kernlab")
+
+```
+
+```{r, warning= FALSE }
+
+# Load the packages
+library(mlbench)
+library(nnet)
+library(randomForest)
+library(adabag)
+library(kernlab)
+
+```
+
+
+# Data import
+
+```{r}
+rm(list = ls())
+# Setting seed
+set.seed(19203116)
+
+# Import the data 
+solar = read.csv("data_project_deepsolar.csv", header = TRUE)
+
+# Data information
+str(solar)
+
+# Summary of target Variable
+summary(solar$solar_system_count)
+
+# Probability of target variable
+prop.table(table(solar$solar_system_count))
+
+# Plot of target variable
+plot(solar$solar_system_count, main = " Bar Plot of Distrubtion", xlab = "Distrubution", ylab = "Solar System Count", ylim = c(0,15000), col = c("purple", "blue"))
+
+# Checking is data is clean
+colSums(is.na(solar))
+
+# Check the dupliacte data
+solar[duplicated(solar), ]
+
+```
+
+# Filtering the data
+
+```{r}
+# Removing the categotical Variable
+solar_num =  solar[-c(1,2,76,79)]
+
+# Check the multicolinearity
+
+## Cut-off at 0.5
+sum((cor(solar_num) > 0.5 | cor(solar_num) < -0.5) & cor(solar_num) < 1) / (77*77)
+
+## Cut-off at 0.7
+sum((cor(solar_num) > 0.7 | cor(solar_num) < -0.7) & cor(solar_num) < 1) / (77*77)
+
+## Cut-off at 0.9
+sum((cor(solar_num) > 0.9 | cor(solar_num) < -0.9) & cor(solar_num) < 1) / (77*77)
+
+# Removing the unwanted variables
+var = cor(solar_num)
+var[!lower.tri(var)] = 0
+
+```
+
+
+# Setting up the data for modeling
+
+```{r}
+# Filtered data and function to scale the data
+solar_new = solar_num[,!apply(var,2,function(k) any(abs(k) > 0.9))]
+dim(solar_new)
+
+# Data set with all reduced variable
+
+# Adding the target variable from the original data set
+data  = cbind(solar$solar_system_count,solar_new)
+
+# Setting up the column name
+colnames(data)[1] = c("solar_system_count") 
+
+```
+
+
+# Modeling
+
+## Dividing the data set for Testing, Trainning and Validation
+
+```{r}
+# Dividing the data for testing, validation and training
+keep = sample(1:nrow(data), size = 0.75 * nrow(data))
+test = setdiff(1:nrow(data),keep)
+
+# Validation data
+dat = data[keep,]
+
+# Test data
+dat_test = data[test,]
+
+# Row Count
+v = nrow(dat)
+
+# No of trails
+R = 20
+
+# Matrix to store the output
+mat = matrix(NA , R , 6)
+mat = as.data.frame(mat) 
+acc = matrix(NA,R,4)
+
+# Change the column name to store the result
+colnames(mat) = c("Multinomial" , "RandomForest", "SVM", "Boosting", "Best" , "Test")
+
+```
+
+# Model Building, Classifier Comparission
+
+```{r}
+# Looping for all the trails
+for (n in 1 : R) 
+{
+  # training and validation sets
+  print(paste0("Trials :", R))
+  
+  ## 75% of data as training set
+  dat_train = sample(1:v, size = 0.75*v)  
+  
+  ## 25% of data as Validation set
+  dat_val = sample(setdiff(1:v, dat_train), size = 0.25*v)
+  
+  # Modelling
+  
+  ## 1. Multinomial Regression
+  fitmr = multinom(solar_system_count ~ ., data = dat, subset = dat_train, trace = FALSE)
+  
+  ## 2. Random Forest
+  fitrf = randomForest(solar_system_count ~ ., data = dat, subset = dat_train, importance = TRUE)
+  
+  
+  ## 3. SVM
+  fitsvm = ksvm(solar_system_count~., data=dat[dat_train,])
+  
+  ## 4. Boosting
+  fitboost = boosting(solar_system_count~., data =dat[dat_train,], coeflearn ="Breiman", boos =FALSE)
+  
+  # Predicting the model and tabulating
+  
+  ## 1. Multinomial Regression 
+  predmr = predict(fitmr, newdata =  dat[dat_val,])
+  tabmr = table(predmr, dat$solar_system_count[dat_val])
+  
+  ## 2. Random Forest
+  predrf = predict(fitrf, newdata =  dat[dat_val,])
+  tabrf = table(predrf, dat$solar_system_count[dat_val])
+  
+  ## 3. SVM
+  predsvm = predict(fitsvm, newdata =  dat[dat_val,])
+  tabsvm = table(predsvm, dat$solar_system_count[dat_val])
+  
+  ## 4. Boosting
+    predboost = predict(fitboost, newdata =  dat[dat_val,])
+  tabboost = predboost$confusion
+  
+  # Calculating the accuracy 
+  
+  ## 1. Multinomial Regression 
+  accmr = sum(diag(tabmr))/sum(tabmr)
+  
+  ## 2. Random Forest
+  accrf = sum(diag(tabrf))/sum(tabrf)
+  
+  ## 3. SVM
+  accsvm = sum(diag(tabsvm))/sum(tabsvm)
+  
+  ## 4. Boosting
+  accboost = sum(diag(tabboost))/sum(tabboost)
+  
+  # Storing accuracy onto matrix
+  acc = c(Multinomial = accmr, RandomForest = accrf, SVM = accsvm, Boosting = accboost)
+  mat[n,1] = accmr
+  mat[n,2] = accrf
+  mat[n,3] = accsvm
+  mat[n,4] = accboost
+  
+  # Finding the accurate model
+  Best = names(which.max(acc))
+  switch(Best,
+         
+         ## 1. Multinomial Regression
+         Multinomial = 
+           {
+           predtestmr = predict(fitmr, type = "class", newdata = dat_test)
+           tabtestmr = table(predtestmr, dat_test$solar_system_count)
+           accbest = sum(diag(tabtestmr))/sum(tabtestmr)
+           },
+         
+         ## 2. Random Forest
+         RandomForest = 
+           {
+           predtestrf = predict(fitrf, type = "class", newdata = dat_test)
+           tabtestrf = table(predtestrf, dat_test$solar_system_count)
+           accbest = sum(diag(tabtestrf))/sum(tabtestrf)
+           },
+           
+         ## 3. SVM
+         SVM = 
+           {
+           predtestsvm = predict(fitsvm, type = "class", newdata = dat_test)
+           tabtestsvm = table(predtestsvm, dat_test$solar_system_count)
+           accbest = sum(diag(tabtestsvm))/sum(tabtestsvm)
+           },
+           
+           ## 4. Boosting
+         Boosting = 
+           {
+           predtestboost = predict(fitboost, type = "class", newdata = dat_test)
+           tabtestboost = table(predtestboost, dat_test$solar_system_count)
+           accbest = sum(diag(tabtestboost))/sum(tabtestboost)
+           }
+  )
+  
+  mat[n,5] = Best
+  mat[n,6] = accbest
+}
+
+# Tabulating the result
+table(mat[,5])
+tapply(mat[,6], mat[,5], summary)
+
+```
+
+# Average, Mean and Standard Deviation
+
+```{r}
+
+# Average
+avg = t(colMeans(as.matrix(mat[,1:4]))) 
+print("Average")
+avg
+
+# Mean 
+mean_acc = colMeans(avg) 
+print("Mean of Average Accuracy")
+mean_acc
+
+# Standard Deviation
+std = apply(mat[,1:4], 2, sd)/sqrt(R)
+std = as.matrix(std)
+print("Standard Deviation")
+std
+
+```
+
+
+# Box Plot
+
+```{r}
+
+# Plotting Box plot to observe the distrubution
+# Box plot
+boxplot(mat$Test ~ mat$Best)
+stripchart(mat$Test ~ mat$Best , add = TRUE, vertical = TRUE, method = "jitter", pch = 15, col = adjustcolor("red", 0.5))
+
+```
+
+
+# Plot of all the models
+
+```{r}
+
+# plot the values
+matplot(mat[,1:4], type = "l", lty = c(2,3,4), col = c("red", "purple","green","blue"), xlab = "Trails-Samples", ylab = "Accuracy", main = "Accuracy Plot",ylim = c(0.87, 0.91), xlim = c(0,20)) 
+
+# Mean Line
+abline(h = mean_acc, col = c("red", "purple","green","blue")) 
+
+# Legend
+legend("topleft", fill = c("red", "purple","green","blue"), legend = c("Multinomial", "Random Forest","SVM","Boosting"), bty = "n")
+
+```
+
+
+
+
+
+
+
